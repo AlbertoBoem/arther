@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ARTHER — a WebXR theremin</title>
+<style>
+  :root {
+    --lacquer: #17110c;
+    --lacquer-lift: #221810;
+    --brass: #e0b169;
+    --brass-dim: #8a6a3c;
+    --filament: #fff1d2;
+    --field: #7fe6ff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--lacquer);
+    color: var(--filament);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  canvas { display: block; }
+
+  /* ---- 2D launch screen (hidden once the AR session starts) ---- */
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 30px;
+    padding: 28px;
+    text-align: center;
+    z-index: 10;
+    background:
+      radial-gradient(120% 90% at 50% 8%, var(--lacquer-lift) 0%, var(--lacquer) 62%);
+  }
+
+  /* In an immersive session the page must contribute nothing: the launch UI is
+     hidden AND the opaque page background is cleared, or it shows through as a
+     dark panel behind the AR content. main.js also sets these inline, matching
+     the reference app, in case the class never lands. */
+  body.xr #stage { display: none; }
+  html.xr, body.xr {
+    background: transparent !important;
+    background-color: transparent !important;
+  }
+  /* Optional: also drop the canvas out of page layout while presenting. The XR
+     compositor owns the framebuffer, so the on-page canvas isn't needed. */
+  body.xr.hide-canvas canvas { display: none !important; }
+
+  h1 {
+    font-size: clamp(30px, 11vw, 62px);
+    font-weight: 300;
+    letter-spacing: .42em;
+    text-indent: .42em;      /* keeps the tracked word optically centred */
+    text-transform: uppercase;
+    color: var(--filament);
+  }
+
+  .sub {
+    margin-top: 12px;
+    font-size: 12px;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: var(--brass);
+  }
+
+  .how {
+    max-width: 34ch;
+    font-size: 15px;
+    line-height: 1.65;
+    color: #cfbfa8;
+  }
+  .how b { color: var(--filament); font-weight: 500; }
+  .how em { color: var(--field); font-style: normal; }
+
+  #enter {
+    appearance: none;
+    padding: 15px 40px;
+    font: inherit;
+    font-size: 13px;
+    letter-spacing: .26em;
+    text-transform: uppercase;
+    color: var(--lacquer);
+    background: var(--brass);
+    border: 0; border-radius: 2px;
+    cursor: pointer;
+    transition: background .2s ease, transform .2s ease, opacity .2s ease;
+  }
+  #enter:hover:enabled { background: var(--filament); transform: translateY(-1px); }
+  #enter:focus-visible { outline: 2px solid var(--field); outline-offset: 4px; }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #enter:disabled { background: #4a3a28; color: #9b8a72; opacity: .55; cursor: default; }
+
+  #test.secondary {
+    background: transparent;
+    color: var(--brass);
+    border: 1px solid var(--brass-dim);
+    padding: 14px 26px;
+  }
+  #test.secondary:hover:enabled { color: var(--filament); border-color: var(--brass); }
+  #test.secondary:disabled { opacity: .4; cursor: default; }
+
+  #status {
+    min-height: 1.4em;
+    font-size: 12px;
+    letter-spacing: .12em;
+    color: var(--brass-dim);
+  }
+  #status.error { color: #ff9a7a; }
+
+  hr.rule {
+    width: 44px; height: 1px; border: 0;
+    background: var(--brass-dim);
+  }
+
+</style>
+</head>
+<body>
+
+  <div id="stage">
+    <div>
+      <h1>ARTHER</h1>
+      <p class="sub">Theremin for Spectacles</p>
+    </div>
+
+    <hr class="rule">
+
+    <p class="how">
+      Place the virtual Theremin in front of you. Use your right hand to
+      control the pitch, and your left hand to control the volume.
+    </p>
+
+    <div class="actions">
+      <button id="enter" disabled>Start playing</button>
+      <button id="test" class="secondary" disabled>Test tone</button>
+    </div>
+    <p id="status">Checking this device…</p>
+  </div>
+
+  <!-- Diagnostics first. Nothing in here can fail to resolve, so it is always
+       available to report on whatever fails next. -->
+  <script>
+  (function () {
+    var el = null;
+    var reported = false;
+    function status(message, isError) {
+      el = el || document.getElementById('status');
+      if (isError) reported = true;
+      if (!el) { console.log('[aether]', message); return; }
+      el.textContent = message;
+      el.classList.toggle('error', !!isError);
+    }
+    window.__aether = { ready: false, status: status };
+
+    // Resource load errors don't bubble, so listen in the capture phase.
+    window.addEventListener('error', function (event) {
+      var target = event.target;
+      if (target && target.tagName === 'SCRIPT') {
+        if (target.dataset && target.dataset.optional) return;  // has a fallback
+        status('Failed to load ' + (target.src || 'a script') + '.', true);
+      } else if (event.message) {
+        status('Error: ' + event.message, true);
+      }
+    }, true);
+
+    window.addEventListener('unhandledrejection', function (event) {
+      var reason = event.reason;
+      status('Error: ' + ((reason && reason.message) || reason), true);
+    });
+
+    // Last-resort watchdog. It must never clobber an error that was already
+    // reported — a specific message beats this guess every time.
+    setTimeout(function () {
+      if (!window.__aether.ready && !reported) {
+        status('App script never ran, and nothing reported why. Check the console.', true);
+      }
+    }, 6000);
+  })();
+  </script>
+
+  <!-- App logic lives in main.js and its imports (config.js, mapping.js,
+       hands.js, thereminModel.js, thereminAudio.js). three.module.js must
+       sit alongside this file; no import map needed since every import
+       uses a relative path. -->
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
