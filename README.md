@@ -1,4 +1,4 @@
-# ARTHER — a WebXR theremin for Spectacles
+# ARTHER: a WebXR theremin for Spectacles
 
 A hand-tracked theremin built with WebXR + Three.js, designed for Snapchat
 Spectacles. Right hand controls pitch, left hand controls volume.
