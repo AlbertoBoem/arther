@@ -105,9 +105,31 @@ export const CONFIG = {
     reanchorHoldMs: 700
   },
 
+  backingTrack: {
+    // Path to a looping background audio file, relative to index.html.
+    // Any format the browser can decode (mp3, m4a/aac, ogg, wav) works.
+    //
+    // 'local'  — you pick a file from your own computer at launch, via the
+    //            file picker on the 2D screen. Nothing to commit to the repo;
+    //            fastest way to iterate while testing in a desktop browser.
+    // 'hosted' — fetched automatically from `url` below at boot. This is the
+    //            one Spectacles needs: a headset has no file picker, so the
+    //            track has to be reachable over the network. Push the file
+    //            to your GitHub repo and point `url` at its raw link.
+    source: 'hosted',
+
+    // Used only when source is 'hosted'. Example, once the file is pushed:
+    // 'https://raw.githubusercontent.com/<user>/<repo>/<branch>/backing-track.mp3'
+    url: 'https://raw.githubusercontent.com/AlbertoBoem/arther/main/waltz.mp3', 
+
+    loop: true,
+    volume: 0.7,     // gain while playing (0..1, independent of the synth's maxGain)
+    fadeSec: 0.08       // fade-in/out time on toggle, so it doesn't click on/off
+  },
+
   visuals: {
     readoutHz: 8,        // canvas texture updates per second (uploads are costly)
-    fieldRings: true,    // concentric guides showing where the octaves sit
+    fieldRings: false,    // concentric guides showing where the octaves sit
     dimWhenIdle: 0.35
   },
 

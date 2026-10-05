@@ -25,6 +25,9 @@ import { createThereminAudio } from './thereminAudio.js';
 const enterButton = document.getElementById('enter');
 const testButton = document.getElementById('test');
 const statusLine = document.getElementById('status');
+const trackPicker = document.getElementById('trackPicker');
+const trackFileInput = document.getElementById('trackFile');
+const trackFileName = document.getElementById('trackFileName');
 
 function setStatus(message, isError = false) {
   statusLine.textContent = message;
@@ -47,9 +50,11 @@ let sessionStartTime = 0;
 let lastFrameTime = 0;
 let paused = false;
 let volumeHandSeen = false;
+let trackObjectUrl = null;   // revoked once its bytes are safely decoded
 
 let bothPinchMs = 0;
 let hudKnobTouching = false;
+let trackKnobTouching = false;
 let debugClock = 0;
 let healthClock = 0;
 let frameError = null;
@@ -67,6 +72,7 @@ const axisA = new THREE.Vector3();
 const axisB = new THREE.Vector3();
 const volumeCentre = new THREE.Vector3();
 const hudKnobPos = new THREE.Vector3();
+const trackKnobPos = new THREE.Vector3();
 const instrumentCentre = new THREE.Vector3();
 const tmpA = new THREE.Vector3();
 const tmpB = new THREE.Vector3();
@@ -79,6 +85,46 @@ function withTimeout(promise, ms) {
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), ms))
   ]);
+}
+
+/**
+ * Wires up the backing loop per CONFIG.backingTrack.source:
+ *  - 'local'  reveals the file picker and loads whatever the person chooses,
+ *    via a blob URL that's revoked once its bytes are safely decoded.
+ *  - 'hosted' fetches CONFIG.backingTrack.url immediately, no interaction
+ *    needed — this is the path Spectacles has to use, since there's no file
+ *    picker in a headset.
+ */
+function setupBackingTrack() {
+  const cfg = CONFIG.backingTrack;
+  if (!cfg) return;
+
+  if (cfg.source === 'local') {
+    if (trackPicker) trackPicker.style.display = 'flex';
+    if (trackFileInput) {
+      trackFileInput.addEventListener('change', () => {
+        const file = trackFileInput.files && trackFileInput.files[0];
+        if (!file || !audio) return;
+
+        if (trackObjectUrl) { URL.revokeObjectURL(trackObjectUrl); trackObjectUrl = null; }
+        trackObjectUrl = URL.createObjectURL(file);
+        if (trackFileName) trackFileName.textContent = `Loading ${file.name}…`;
+
+        audio.loadBackingTrack(trackObjectUrl).then((ok) => {
+          if (trackFileName) {
+            trackFileName.textContent = ok
+              ? `${file.name} — ready (tap the left knob to play)`
+              : `${file.name} — failed to decode, try another file`;
+          }
+          // decodeAudioData has already copied the bytes out of the blob by
+          // the time the promise resolves, so the object URL can go.
+          if (trackObjectUrl) { URL.revokeObjectURL(trackObjectUrl); trackObjectUrl = null; }
+        });
+      });
+    }
+  } else if (cfg.url) {
+    audio.loadBackingTrack(cfg.url);
+  }
 }
 
 async function boot() {
@@ -98,6 +144,13 @@ async function boot() {
     setStatus(`Audio setup failed: ${error.message}`, true);
     return;
   }
+
+  // Backing loop: either wait for the person to pick a file from their own
+  // computer, or fetch a hosted URL automatically — see CONFIG.backingTrack.source.
+  // Loading needs no user gesture (only starting playback does), so the
+  // 'hosted' fetch can start right away, while the person is still looking
+  // at this screen.
+  setupBackingTrack();
 
   setStatus('Checking WebXR…');
   if (!navigator.xr) {
@@ -386,6 +439,7 @@ function onFrame(time) {
     } else {
       handleReanchorGesture(dt);
       handleHudKnobToggle();
+      handleTrackKnobToggle();
       drive(dt);
     }
 
@@ -420,6 +474,8 @@ function onFrame(time) {
         reason: audio && audio.isReady ? silenceReason : 'no-audio',
         error: frameError || (audio ? audio.resumeError : null)
       });
+      if (theremin.setTrackPlaying) theremin.setTrackPlaying(!!(audio && audio.isTrackPlaying));
+      if (theremin.setHudActive) theremin.setHudActive(!!CONFIG.debug.hud);
       theremin.update(dt, camera);
     }
 
@@ -472,16 +528,47 @@ function handleReanchorGesture(dt) {
 
 /** Tap-to-toggle: fires once on the rising edge, not every frame of contact. */
 function handleHudKnobToggle() {
-  theremin.getHudKnobPosition(hudKnobPos);
-  const touchRadius = 0.03;
-  const touching =
-    (hands.right.tracked && hands.right.indexTip.distanceTo(hudKnobPos) < touchRadius) ||
-    (hands.left.tracked && hands.left.indexTip.distanceTo(hudKnobPos) < touchRadius);
+  try {
+    theremin.getHudKnobPosition(hudKnobPos);
+    const touchRadius = 0.03;
+    const touching =
+      (hands.right.tracked && hands.right.indexTip.distanceTo(hudKnobPos) < touchRadius) ||
+      (hands.left.tracked && hands.left.indexTip.distanceTo(hudKnobPos) < touchRadius);
 
-  if (touching && !hudKnobTouching) {
-    CONFIG.debug.hud = !CONFIG.debug.hud;
+    if (touching && !hudKnobTouching) {
+      CONFIG.debug.hud = !CONFIG.debug.hud;
+    }
+    hudKnobTouching = touching;
+  } catch (error) {
+    // A broken knob must never block pitch/volume tracking below it — log
+    // once and keep going instead of throwing up into onFrame().
+    if (!frameError) {
+      frameError = `hud knob: ${error && error.message ? error.message : error}`;
+      console.error('[aether] hud knob toggle failed:', error);
+    }
   }
-  hudKnobTouching = touching;
+}
+
+/** Same tap-to-toggle pattern as the HUD knob, but for the backing track. */
+function handleTrackKnobToggle() {
+  try {
+    if (!theremin.getTrackKnobPosition) return;   // older/mismatched theremin model
+    theremin.getTrackKnobPosition(trackKnobPos);
+    const touchRadius = 0.03;
+    const touching =
+      (hands.right.tracked && hands.right.indexTip.distanceTo(trackKnobPos) < touchRadius) ||
+      (hands.left.tracked && hands.left.indexTip.distanceTo(trackKnobPos) < touchRadius);
+
+    if (touching && !trackKnobTouching && audio) {
+      audio.toggleBackingTrack();
+    }
+    trackKnobTouching = touching;
+  } catch (error) {
+    if (!frameError) {
+      frameError = `track knob: ${error && error.message ? error.message : error}`;
+      console.error('[aether] track knob toggle failed:', error);
+    }
+  }
 }
 
 function drive(dt) {

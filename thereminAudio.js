@@ -34,6 +34,19 @@ export function createThereminAudio(config) {
   let keepAlive = null;
   let lastState = 'none';
 
+  // ---- backing track (looping background bed) ----------------------------
+  // Same lifecycle discipline as the oscillators above: decode once, start
+  // the looping source once the context is running, and never stop it —
+  // toggling on/off is purely a gain ramp on trackGain, so there's no risk
+  // of "start() called twice" on a one-shot AudioBufferSourceNode.
+  let trackBuffer = null;
+  let trackSource = null;
+  let trackGain = null;
+  let trackLoadPromise = null;
+  let trackRequestId = 0;   // guards against an in-flight load being superseded
+  let trackWanted = false;   // last requested on/off state
+  let trackLoadError = null;
+
   /** Create the context and graph. No user gesture needed for this part. */
   function build() {
     if (built) return;
@@ -92,8 +105,101 @@ export function createThereminAudio(config) {
     filter.connect(amp);
     amp.connect(ctx.destination);
 
+    // Backing track's own gain -> destination, independent of the synth's
+    // amp node so toggling the loop never touches the played note's level.
+    trackGain = ctx.createGain();
+    trackGain.gain.value = 0;
+    trackGain.connect(ctx.destination);
+
     nodes = { sine, tri, sineGain, triGain, lfo, lfoDepth, filter, amp };
     built = true;
+  }
+
+  /**
+   * Fetch and decode a background loop. Safe to call any time after build()
+   * — decoding needs no user gesture, only starting playback does, so this
+   * can (and should) kick off while the person is still on the 2D launch
+   * screen. If the context is already running when the file lands, the loop
+   * starts immediately at zero gain; otherwise unlock()/resume() starts it.
+   *
+   * Can be called again later (e.g. the person picks a different local
+   * file): the in-flight load is superseded rather than queued, and the
+   * currently-playing loop is swapped out once the new one is ready.
+   */
+  function loadBackingTrack(url) {
+    if (!url) return Promise.resolve(false);
+    if (!built) build();
+
+    const requestId = ++trackRequestId;
+    trackLoadError = null;
+
+    const promise = (async () => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status} loading ${url}`);
+        const bytes = await response.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(bytes);
+
+        // A newer load started while this one was in flight — drop this result.
+        if (requestId !== trackRequestId) return false;
+
+        stopTrackSource();
+        trackBuffer = decoded;
+        console.log('[aether] backing track decoded:', trackBuffer.duration.toFixed(1), 's');
+        if (started) startTrackSource();
+        return true;
+      } catch (error) {
+        if (requestId !== trackRequestId) return false;
+        trackLoadError = error && error.message ? error.message : String(error);
+        console.warn('[aether] backing track failed to load:', trackLoadError);
+        return false;
+      }
+    })();
+
+    trackLoadPromise = promise;
+    return promise;
+  }
+
+  /** Stops and forgets the current loop source, if any (e.g. swapping files). */
+  function stopTrackSource() {
+    if (trackSource) {
+      try { trackSource.stop(); trackSource.disconnect(); } catch (_) { /* ignore */ }
+      trackSource = null;
+    }
+  }
+
+  /** Starts the looping source exactly once, at silence. Idempotent. */
+  function startTrackSource() {
+    if (!trackBuffer || trackSource || !ctx) return;
+    trackSource = ctx.createBufferSource();
+    trackSource.buffer = trackBuffer;
+    trackSource.loop = !config.backingTrack || config.backingTrack.loop !== false;
+    trackSource.connect(trackGain);
+    trackSource.start(ctx.currentTime);
+    // Apply whatever on/off state was requested before the file was ready.
+    applyTrackGain();
+  }
+
+  function applyTrackGain() {
+    if (!trackGain || !ctx) return;
+    const cfgTrack = config.backingTrack || {};
+    const target = trackWanted ? (cfgTrack.volume != null ? cfgTrack.volume : 0.55) : 0;
+    const fade = cfgTrack.fadeSec != null ? cfgTrack.fadeSec : 0.5;
+    trackGain.gain.setTargetAtTime(target, ctx.currentTime, fade);
+  }
+
+  /** Turn the background loop on or off. Safe to call before the file loads
+   *  or before the context is running — the state is remembered and applied
+   *  as soon as both are ready. */
+  function setBackingTrackPlaying(playing) {
+    trackWanted = !!playing;
+    if (started && trackBuffer && !trackSource) startTrackSource();
+    applyTrackGain();
+  }
+
+  function toggleBackingTrack() {
+    setBackingTrackPlaying(!trackWanted);
+    return trackWanted;
   }
 
   /**
@@ -125,6 +231,10 @@ export function createThereminAudio(config) {
       // it at the real level — audible as a click.
       nodes.amp.gain.setTargetAtTime(cfg.idleGain, ctx.currentTime, 0.01);
     }
+
+    // If the backing track finished decoding before the context unlocked,
+    // start its loop now too.
+    if (trackBuffer) startTrackSource();
 
     return ctx.state;
   }
@@ -221,6 +331,16 @@ export function createThereminAudio(config) {
       } catch (_) { /* ignore teardown noise */ }
       nodes = null;
     }
+    if (trackSource) {
+      try { trackSource.stop(); trackSource.disconnect(); } catch (_) { /* ignore */ }
+      trackSource = null;
+    }
+    if (trackGain) {
+      try { trackGain.disconnect(); } catch (_) { /* ignore */ }
+      trackGain = null;
+    }
+    trackBuffer = null;
+    trackLoadPromise = null;
     if (keepAlive) {
       try { keepAlive.pause(); keepAlive.remove(); } catch (_) {}
       keepAlive = null;
@@ -243,6 +363,9 @@ export function createThereminAudio(config) {
     updateListener,
     blip,
     dispose,
+    loadBackingTrack,
+    setBackingTrackPlaying,
+    toggleBackingTrack,
     get isBuilt() { return built; },
     get isReady() { return built && started; },
     get contextState() { return ctx ? ctx.state : 'none'; },
@@ -251,7 +374,10 @@ export function createThereminAudio(config) {
     get ampValue() {
       try { return nodes ? nodes.amp.gain.value : -1; } catch (_) { return -1; }
     },
-    get resumeError() { return resumeError; }
+    get resumeError() { return resumeError; },
+    get isTrackPlaying() { return trackWanted; },
+    get isTrackLoaded() { return !!trackBuffer; },
+    get trackLoadError() { return trackLoadError; }
   };
 }
 

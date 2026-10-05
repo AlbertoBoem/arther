@@ -56,11 +56,12 @@ export function createTheremin(config) {
 
   // two control knobs on the top panel, front edge. The one nearer the pitch
   // antenna (player's right) doubles as a HUD toggle: tap it to show/hide
-  // the entire readout panel (note, frequency, level bar, diagnostics).
-  const decorKnob = new THREE.Mesh(new THREE.RingGeometry(0.011, 0.015, 20), additive(AMBER, 0.85));
-  decorKnob.rotation.x = -Math.PI / 2;
-  decorKnob.position.set(-0.055, CAB.h / 2 + 0.001, 0.035);
-  group.add(decorKnob);
+  // the entire readout panel (note, frequency, level bar, diagnostics). The
+  // one on the left toggles the looping backing track on/off.
+  const trackKnob = new THREE.Mesh(new THREE.RingGeometry(0.011, 0.015, 20), additive(AMBER, 0.85));
+  trackKnob.rotation.x = -Math.PI / 2;
+  trackKnob.position.set(-0.055, CAB.h / 2 + 0.001, 0.035);
+  group.add(trackKnob);
 
   const hudKnob = new THREE.Mesh(new THREE.RingGeometry(0.011, 0.015, 20), additive(AMBER, 0.85));
   hudKnob.rotation.x = -Math.PI / 2;
@@ -269,6 +270,7 @@ export function createTheremin(config) {
   const localPitchB = new THREE.Vector3(ANT.x, antennaBaseY + ANT.len, 0);
   const localVolume = new THREE.Vector3(LOOP.x, CAB.h / 2, 0);
   const localHudKnob = hudKnob.position.clone();
+  const localTrackKnob = trackKnob.position.clone();
   const _camPos = new THREE.Vector3();
   const _selfPos = new THREE.Vector3();
 
@@ -282,6 +284,9 @@ export function createTheremin(config) {
   }
   function getHudKnobPosition(target) {
     target.copy(localHudKnob).applyMatrix4(group.matrixWorld);
+  }
+  function getTrackKnobPosition(target) {
+    target.copy(localTrackKnob).applyMatrix4(group.matrixWorld);
   }
   function getCentre(target) {
     return target.setFromMatrixPosition(group.matrixWorld);
@@ -304,6 +309,21 @@ export function createTheremin(config) {
     info.freq = freq;
     info.pitchHand = tracked;
     info.snapped = snapped;
+  }
+
+  /** Lit cyan while the backing track is playing, dim amber while it's off —
+   *  its own on/off indicator, just like the HUD knob. */
+  function setTrackPlaying(playing) {
+    trackKnob.material.color.setHex(playing ? CYAN : AMBER);
+    trackKnob.material.opacity = playing ? 1 : 0.85;
+  }
+
+  /** Same idea for the HUD knob: lit while the readout panel is shown. Cyan
+   *  on, not just a brighter amber — AMBER vs AMBER_HOT was too close in hue
+   *  to read as a clear on/off signal, especially through additive blending. */
+  function setHudActive(active) {
+    hudKnob.material.color.setHex(active ? CYAN : AMBER);
+    hudKnob.material.opacity = active ? 1 : 0.85;
   }
 
   function setVolumeState(level01, distance, tracked) {
@@ -334,11 +354,6 @@ export function createTheremin(config) {
     readout.getWorldPosition(_selfPos);
     const yaw = Math.atan2(_camPos.x - _selfPos.x, _camPos.z - _selfPos.z);
     readout.rotation.set(0, yaw - group.rotation.y, 0);
-
-    // Lit when the HUD is on, dim when off — the knob is its own on/off
-    // indicator.
-    hudKnob.material.color.setHex(config.debug.hud ? AMBER_HOT : AMBER);
-    hudKnob.material.opacity = config.debug.hud ? 1 : 0.85;
   }
 
   function dispose() {
@@ -357,9 +372,12 @@ export function createTheremin(config) {
     getPitchAxis,
     getVolumeCentre,
     getHudKnobPosition,
+    getTrackKnobPosition,
     getCentre,
     setPitchState,
     setVolumeState,
+    setTrackPlaying,
+    setHudActive,
     setDiagnostics,
     update,
     dispose
@@ -477,4 +495,3 @@ export function createAudioPrompt(config) {
 
   return { group, show, hide, setMessage, update, containsPoint, dispose };
 }
-
