@@ -6,12 +6,20 @@
 <title>ARTHER — a WebXR theremin</title>
 <style>
   :root {
-    --lacquer: #17110c;
-    --lacquer-lift: #221810;
-    --brass: #e0b169;
-    --brass-dim: #8a6a3c;
-    --filament: #fff1d2;
-    --field: #7fe6ff;
+    /* Pulled directly from thereminModel.js so the launch screen and the
+       AR scene read as one object, not two different designs. --brass,
+       --filament and --field are exact matches for that file's AMBER,
+       AMBER_HOT and CYAN; --lacquer/--lacquer-lift/--brass-dim are the
+       only values with no literal AR equivalent (the scene has no
+       background fill), so they're derived at AMBER's own hue instead of
+       picked separately. */
+    --lacquer: #19130a;
+    --lacquer-lift: #241c0f;
+    --brass: #ffc978;       /* == AMBER */
+    --brass-dim: #a77f44;   /* muted AMBER, for secondary text/borders */
+    --filament: #fff4d6;    /* == AMBER_HOT */
+    --field: #7fe6ff;       /* == CYAN */
+    --ink: #d9c2a0;         /* body copy: AMBER at low saturation, easier to read at length */
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -31,12 +39,14 @@
   #stage {
     position: fixed; inset: 0;
     display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    gap: 30px;
-    padding: 28px;
+    align-items: center; justify-content: safe center;
+    overflow-y: auto;
+    gap: 22px;
+    padding: 24px;
     text-align: center;
     z-index: 10;
     background:
+      radial-gradient(90% 70% at 50% 62%, rgba(255, 201, 120, .07) 0%, transparent 70%),
       radial-gradient(120% 90% at 50% 8%, var(--lacquer-lift) 0%, var(--lacquer) 62%);
   }
 
@@ -74,11 +84,13 @@
     max-width: 34ch;
     font-size: 15px;
     line-height: 1.65;
-    color: #cfbfa8;
+    color: var(--ink);
   }
-  .how b { color: var(--filament); font-weight: 500; }
+  .how b { color: var(--brass); font-weight: 500; }
   .how em { color: var(--field); font-style: normal; }
 
+  /* Buttons borrow the AR scene's look: thin glowing lines, no solid fill.
+     Amber is the pitch/primary colour, cyan the secondary one. */
   #enter {
     appearance: none;
     padding: 15px 40px;
@@ -86,13 +98,19 @@
     font-size: 13px;
     letter-spacing: .26em;
     text-transform: uppercase;
-    color: var(--lacquer);
-    background: var(--brass);
-    border: 0; border-radius: 2px;
+    color: var(--filament);
+    background: rgba(255, 201, 120, .06);
+    border: 1px solid var(--brass); border-radius: 2px;
+    box-shadow: 0 0 14px rgba(255, 201, 120, .35), inset 0 0 14px rgba(255, 201, 120, .16);
+    text-shadow: 0 0 8px rgba(255, 201, 120, .7);
     cursor: pointer;
-    transition: background .2s ease, transform .2s ease, opacity .2s ease;
+    transition: background .2s ease, box-shadow .2s ease, transform .2s ease, opacity .2s ease;
   }
-  #enter:hover:enabled { background: var(--filament); transform: translateY(-1px); }
+  #enter:hover:enabled {
+    background: rgba(255, 201, 120, .16);
+    box-shadow: 0 0 24px rgba(255, 201, 120, .6), inset 0 0 18px rgba(255, 201, 120, .3);
+    transform: translateY(-1px);
+  }
   #enter:focus-visible { outline: 2px solid var(--field); outline-offset: 4px; }
   .actions {
     display: flex;
@@ -102,16 +120,30 @@
     justify-content: center;
   }
 
-  #enter:disabled { background: #4a3a28; color: #9b8a72; opacity: .55; cursor: default; }
+  #enter:disabled {
+    background: transparent; color: var(--brass-dim); border-color: var(--brass-dim);
+    box-shadow: none; text-shadow: none; opacity: .55; cursor: default;
+  }
 
   #test.secondary {
-    background: transparent;
-    color: var(--brass);
-    border: 1px solid var(--brass-dim);
+    appearance: none;
+    font: inherit;
+    font-size: 13px;
+    letter-spacing: .26em;
+    text-transform: uppercase;
+    background: rgba(127, 230, 255, .04);
+    color: var(--field);
+    border: 1px solid rgba(127, 230, 255, .6); border-radius: 2px;
+    box-shadow: 0 0 12px rgba(127, 230, 255, .25), inset 0 0 12px rgba(127, 230, 255, .1);
     padding: 14px 26px;
+    cursor: pointer;
+    transition: background .2s ease, box-shadow .2s ease;
   }
-  #test.secondary:hover:enabled { color: var(--filament); border-color: var(--brass); }
-  #test.secondary:disabled { opacity: .4; cursor: default; }
+  #test.secondary:hover:enabled {
+    background: rgba(127, 230, 255, .12);
+    box-shadow: 0 0 22px rgba(127, 230, 255, .5), inset 0 0 16px rgba(127, 230, 255, .22);
+  }
+  #test.secondary:disabled { opacity: .35; box-shadow: none; cursor: default; }
 
   #status {
     min-height: 1.4em;
@@ -122,8 +154,25 @@
   #status.error { color: #ff9a7a; }
 
   hr.rule {
-    width: 44px; height: 1px; border: 0;
-    background: var(--brass-dim);
+    width: 120px; height: 1px; border: 0;
+    background: linear-gradient(90deg, transparent, var(--brass), transparent);
+    opacity: .7;
+  }
+
+  /* Wireframe theremin: same geometry language as thereminModel.js — amber
+     cabinet and pitch antenna on the right, cyan volume loop on the left. */
+  .instrument { width: min(78vw, 340px); height: auto; overflow: visible; }
+  .instrument .bead { animation: ride 5s ease-in-out infinite; }
+  .instrument .rung { animation: level 2.6s ease-in-out infinite; }
+  .instrument .rung:nth-child(2) { animation-delay: .15s; }
+  .instrument .rung:nth-child(3) { animation-delay: .3s; }
+  .instrument .rung:nth-child(4) { animation-delay: .45s; }
+  .instrument .rung:nth-child(5) { animation-delay: .6s; }
+  .instrument .rung:nth-child(6) { animation-delay: .75s; }
+  @keyframes ride  { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-110px); } }
+  @keyframes level { 0%, 100% { opacity: .15; } 50% { opacity: .9; } }
+  @media (prefers-reduced-motion: reduce) {
+    .instrument .bead, .instrument .rung { animation: none; }
   }
 
   /* ---- optional local backing-track picker (CONFIG.backingTrack.source
@@ -150,16 +199,19 @@
     font-size: 12px;
     letter-spacing: .2em;
     text-transform: uppercase;
-    color: var(--brass);
+    color: var(--field);
     background: transparent;
-    border: 1px solid var(--brass-dim);
+    border: 1px solid rgba(127, 230, 255, .5);
     border-radius: 2px;
     cursor: pointer;
-    transition: color .2s ease, border-color .2s ease;
+    transition: color .2s ease, border-color .2s ease, box-shadow .2s ease;
   }
-  #trackPicker .file-label:hover { color: var(--filament); border-color: var(--brass); }
+  #trackPicker .file-label:hover {
+    color: var(--filament); border-color: var(--field);
+    box-shadow: 0 0 14px rgba(127, 230, 255, .4);
+  }
   #trackFileName {
-    color: #cfbfa8;
+    color: var(--ink);
     max-width: 22ch;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -176,11 +228,61 @@
       <p class="sub">Theremin for Spectacles</p>
     </div>
 
+    <svg class="instrument" viewBox="0 0 380 250" role="img" aria-label="Wireframe theremin with a pitch antenna on the right and a volume loop on the left">
+      <defs>
+        <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="2.2" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- pitch side: octave rings, cabinet, knobs, antenna (amber) -->
+      <g filter="url(#glow)" fill="none" stroke-linejoin="round">
+        <g stroke="#ffc978" stroke-width="1" opacity=".22">
+          <ellipse cx="277" cy="95" rx="40"  ry="11"/>
+          <ellipse cx="277" cy="95" rx="70"  ry="20"/>
+          <ellipse cx="277" cy="95" rx="100" ry="28"/>
+        </g>
+        <g stroke="#ffc978" stroke-width="1.4" opacity=".9">
+          <rect x="95" y="178" width="190" height="52"/>
+          <polygon points="95,178 113,164 303,164 285,178"/>
+          <polygon points="285,178 303,164 303,216 285,230"/>
+        </g>
+        <g stroke="#ffc978" stroke-width="1.6" opacity=".85">
+          <ellipse cx="168" cy="171" rx="7" ry="2.4"/>
+          <ellipse cx="207" cy="171" rx="7" ry="2.4"/>
+        </g>
+        <line x1="277" y1="178" x2="277" y2="24" stroke="#ffc978" stroke-width="9" opacity=".15"/>
+        <line x1="277" y1="178" x2="277" y2="24" stroke="#fff4d6" stroke-width="2.4"/>
+        <circle class="bead" cx="277" cy="150" r="5.5" fill="#fff4d6" fill-opacity=".55" stroke="#fff4d6" stroke-width="1"/>
+      </g>
+
+      <!-- volume side: loop, stem, dead-zone bubble, level ladder (cyan) -->
+      <g filter="url(#glow)" fill="none" stroke="#7fe6ff">
+        <ellipse cx="70" cy="178" rx="50" ry="14" stroke-width="2.4"/>
+        <line x1="120" y1="178" x2="95" y2="178" stroke-width="2"/>
+        <circle cx="70" cy="178" r="17" fill="#7fe6ff" fill-opacity=".1" stroke-width=".8" opacity=".5"/>
+        <g stroke-width="2.2">
+          <line class="rung" x1="52" y1="156" x2="88" y2="156"/>
+          <line class="rung" x1="52" y1="145" x2="88" y2="145"/>
+          <line class="rung" x1="51" y1="134" x2="89" y2="134"/>
+          <line class="rung" x1="51" y1="123" x2="89" y2="123"/>
+          <line class="rung" x1="50" y1="112" x2="90" y2="112"/>
+          <line class="rung" x1="50" y1="101" x2="90" y2="101"/>
+        </g>
+      </g>
+
+      <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="9" letter-spacing="3" text-anchor="middle">
+        <text x="277" y="248" fill="#ffc978" opacity=".75">PITCH</text>
+        <text x="70"  y="248" fill="#7fe6ff" opacity=".75">VOLUME</text>
+      </g>
+    </svg>
+
     <hr class="rule">
 
     <p class="how">
-      Place the virtual Theremin in front of you. Use your right hand to
-      control the pitch, and your left hand to control the volume.
+      Place the virtual Theremin in front of you. Use your <b>right hand</b> to
+      control the pitch, and your <em>left hand</em> to control the volume.
     </p>
 
     <div id="trackPicker">
