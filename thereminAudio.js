@@ -20,7 +20,19 @@
  *
  * Parameter changes use setTargetAtTime: a one-pole approach in the audio
  * thread. No scheduling, no cancellation, no zipper noise, and it cannot throw.
+ *
+ * Two things hang off that core, both optional and both parallel to it:
+ *
+ *   amp ─> reverb send ─> destination        (expression.js, createSmallReverb)
+ *   drone voices ─> trackGain ─> destination (drone.js)
+ *
+ * Neither sits in the dry path, so neither can attenuate or interrupt the
+ * played note. The drone took over the backing track's slot: same trackGain,
+ * same on/off, same knob — synthesised instead of decoded from an mp3.
  */
+
+import { createDrone } from './drone.js';
+import { createSmallReverb } from './expression.js';
 
 export function createThereminAudio(config) {
   const cfg = config.audio;
@@ -34,18 +46,49 @@ export function createThereminAudio(config) {
   let keepAlive = null;
   let lastState = 'none';
 
-  // ---- backing track (looping background bed) ----------------------------
-  // Same lifecycle discipline as the oscillators above: decode once, start
-  // the looping source once the context is running, and never stop it —
-  // toggling on/off is purely a gain ramp on trackGain, so there's no risk
-  // of "start() called twice" on a one-shot AudioBufferSourceNode.
-  let trackBuffer = null;
-  let trackSource = null;
+  // ---- the bed (generative drone, formerly the mp3 backing track) --------
+  // Same lifecycle discipline as the oscillators above: build once, start the
+  // voices once the context is running, and never stop them — toggling on/off
+  // is purely a gain ramp on trackGain. With oscillators instead of a one-shot
+  // AudioBufferSourceNode there is no "start() called twice" hazard left.
+  //
+  // The track* names are kept deliberately: main.js, thereminModel.js and the
+  // knob handler all speak them, and renaming would have meant touching three
+  // files to change nothing.
+  let drone = null;
   let trackGain = null;
-  let trackLoadPromise = null;
-  let trackRequestId = 0;   // guards against an in-flight load being superseded
   let trackWanted = false;   // last requested on/off state
-  let trackLoadError = null;
+  let trackLoadError = null; // nothing to load any more; kept for the HUD
+
+  // ---- master bus --------------------------------------------------------
+  // Everything that makes sound lands here instead of on ctx.destination: the
+  // voice, the reverb's wet return, the bed, and the confirmation blip.
+  //
+  // This exists because the destination clips HARD at 1.0 and nothing in this
+  // graph limited. The voice alone reaches maxGain 0.85 and the bed can peak
+  // at 0.6 on a pluck, so the two together were asking for 1.45 and getting
+  // square edges. A WaveShaper is the cheapest honest fix: it is a lookup
+  // table, stateless, with no feedback path and no state to go wrong. It
+  // cannot ring, build or self-oscillate the way the first reverb did.
+  let outputBus = null;      // what everything connects to
+  let limiterPre = null;
+  let limiterShaper = null;
+
+  /** tanh soft clip, normalised so the curve reaches exactly 1.0 at full scale. */
+  function makeClipCurve(drive, points = 2049) {
+    const curve = new Float32Array(points);
+    const norm = Math.tanh(drive);
+    for (let i = 0; i < points; i++) {
+      const x = (i * 2) / (points - 1) - 1;       // -1 .. 1
+      curve[i] = Math.tanh(drive * x) / norm;
+    }
+    return curve;
+  }
+
+  // ---- expression (hand movement -> timbre) ------------------------------
+  let reverb = null;
+  let lastFreq = 220;        // so setExpression can reopen the filter
+  let exprBrightness = 1;    // filter cutoff multiplier, from palm speed
 
   /** Create the context and graph. No user gesture needed for this part. */
   function build() {
@@ -103,98 +146,115 @@ export function createThereminAudio(config) {
     lfoDepth.connect(sine.detune);
     lfoDepth.connect(tri.detune);
     filter.connect(amp);
-    amp.connect(ctx.destination);
 
-    // Backing track's own gain -> destination, independent of the synth's
-    // amp node so toggling the loop never touches the played note's level.
+    // The master bus. With the limiter off, outputBus IS ctx.destination and
+    // the graph is byte-for-byte what it was before — nothing extra in the
+    // path, which is the behaviour this build has defended all along.
+    const lim = cfg.limiter || {};
+    if (lim.enabled === false) {
+      outputBus = ctx.destination;
+    } else {
+      limiterPre = ctx.createGain();
+      limiterPre.gain.value = lim.inputGain != null ? lim.inputGain : 0.7;
+
+      limiterShaper = ctx.createWaveShaper();
+      limiterShaper.curve = makeClipCurve(lim.drive != null ? lim.drive : 1.2);
+      // 2x oversampling keeps the harmonics the clipper generates from folding
+      // back down as aliasing. 4x is available and costs more for very little.
+      limiterShaper.oversample = '2x';
+
+      limiterPre.connect(limiterShaper);
+      limiterShaper.connect(ctx.destination);
+      outputBus = limiterPre;
+    }
+
+    amp.connect(outputBus);
+
+    // Reverb on a parallel send, never in line: amp still goes straight to
+    // the bus above, so a misbehaving reverb cannot make the
+    // instrument quieter or silent. One more node between the player and
+    // sound is exactly what this build has been avoiding.
+    if (!config.reverb || config.reverb.enabled !== false) {
+      try {
+        reverb = createSmallReverb(ctx, config);
+        amp.connect(reverb.input);
+        reverb.output.connect(outputBus);
+      } catch (error) {
+        console.warn('[aether] reverb unavailable:', error && error.message);
+        reverb = null;
+      }
+    }
+
+    // The bed's own gain -> destination, independent of the synth's amp node
+    // so toggling it never touches the played note's level.
     trackGain = ctx.createGain();
     trackGain.gain.value = 0;
-    trackGain.connect(ctx.destination);
+    trackGain.connect(outputBus);
+
+    if (!config.drone || config.drone.enabled !== false) {
+      try {
+        drone = createDrone(ctx, trackGain, config);
+      } catch (error) {
+        console.warn('[aether] drone unavailable:', error && error.message);
+        drone = null;
+      }
+    }
 
     nodes = { sine, tri, sineGain, triGain, lfo, lfoDepth, filter, amp };
     built = true;
   }
 
   /**
-   * Fetch and decode a background loop. Safe to call any time after build()
-   * — decoding needs no user gesture, only starting playback does, so this
-   * can (and should) kick off while the person is still on the 2D launch
-   * screen. If the context is already running when the file lands, the loop
-   * starts immediately at zero gain; otherwise unlock()/resume() starts it.
-   *
-   * Can be called again later (e.g. the person picks a different local
-   * file): the in-flight load is superseded rather than queued, and the
-   * currently-playing loop is swapped out once the new one is ready.
+   * Kept for source compatibility: main.js and any older caller can still ask
+   * for a backing track and get a sane answer. There is nothing to fetch now —
+   * the bed is synthesised — so this just makes sure the graph exists and
+   * reports success. The url argument is ignored.
    */
-  function loadBackingTrack(url) {
-    if (!url) return Promise.resolve(false);
+  function loadBackingTrack(/* url */) {
     if (!built) build();
-
-    const requestId = ++trackRequestId;
-    trackLoadError = null;
-
-    const promise = (async () => {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status} loading ${url}`);
-        const bytes = await response.arrayBuffer();
-        const decoded = await ctx.decodeAudioData(bytes);
-
-        // A newer load started while this one was in flight — drop this result.
-        if (requestId !== trackRequestId) return false;
-
-        stopTrackSource();
-        trackBuffer = decoded;
-        console.log('[aether] backing track decoded:', trackBuffer.duration.toFixed(1), 's');
-        if (started) startTrackSource();
-        return true;
-      } catch (error) {
-        if (requestId !== trackRequestId) return false;
-        trackLoadError = error && error.message ? error.message : String(error);
-        console.warn('[aether] backing track failed to load:', trackLoadError);
-        return false;
-      }
-    })();
-
-    trackLoadPromise = promise;
-    return promise;
+    return Promise.resolve(!!drone);
   }
 
-  /** Stops and forgets the current loop source, if any (e.g. swapping files). */
-  function stopTrackSource() {
-    if (trackSource) {
-      try { trackSource.stop(); trackSource.disconnect(); } catch (_) { /* ignore */ }
-      trackSource = null;
-    }
-  }
-
-  /** Starts the looping source exactly once, at silence. Idempotent. */
-  function startTrackSource() {
-    if (!trackBuffer || trackSource || !ctx) return;
-    trackSource = ctx.createBufferSource();
-    trackSource.buffer = trackBuffer;
-    trackSource.loop = !config.backingTrack || config.backingTrack.loop !== false;
-    trackSource.connect(trackGain);
-    trackSource.start(ctx.currentTime);
-    // Apply whatever on/off state was requested before the file was ready.
+  /** Starts the drone's oscillators exactly once. Idempotent. */
+  function startDrone() {
+    if (!drone || !ctx) return;
+    drone.start();
+    // Apply whatever on/off state was requested before the context was ready.
     applyTrackGain();
   }
 
   function applyTrackGain() {
     if (!trackGain || !ctx) return;
-    const cfgTrack = config.backingTrack || {};
-    const target = trackWanted ? (cfgTrack.volume != null ? cfgTrack.volume : 0.55) : 0;
-    const fade = cfgTrack.fadeSec != null ? cfgTrack.fadeSec : 0.5;
+    const cfgBed = config.drone || {};
+    const target = trackWanted ? (cfgBed.volume != null ? cfgBed.volume : 0.5) : 0;
+    const fade = cfgBed.fadeSec != null ? cfgBed.fadeSec : 0.5;
     trackGain.gain.setTargetAtTime(target, ctx.currentTime, fade);
   }
 
-  /** Turn the background loop on or off. Safe to call before the file loads
-   *  or before the context is running — the state is remembered and applied
-   *  as soon as both are ready. */
+  /** Turn the bed on or off. Safe to call before the context is running —
+   *  the state is remembered and applied as soon as it is. */
   function setBackingTrackPlaying(playing) {
     trackWanted = !!playing;
-    if (started && trackBuffer && !trackSource) startTrackSource();
+    if (started) startDrone();
+    // Switching off also parks the chord clock, so the harmony is where you
+    // left it when you switch back on rather than having wandered in silence.
+    if (drone) drone.setActive(trackWanted);
     applyTrackGain();
+  }
+
+  /**
+   * Per-frame tick for the bed: advances the chord clock and the slow filter
+   * opening. No-op while the bed is off. Called from drive().
+   */
+  function updateDrone(dt, level01) {
+    if (!started || !drone) return;
+    drone.update(dt, level01 || 0);
+  }
+
+  /** Pitch classes the bed is sounding, or null. Unused while pitch.scale is
+   *  null; here because chord-following snap would need exactly this. */
+  function chordTones() {
+    return drone ? drone.chordTones() : null;
   }
 
   function toggleBackingTrack() {
@@ -232,9 +292,9 @@ export function createThereminAudio(config) {
       nodes.amp.gain.setTargetAtTime(cfg.idleGain, ctx.currentTime, 0.01);
     }
 
-    // If the backing track finished decoding before the context unlocked,
-    // start its loop now too.
-    if (trackBuffer) startTrackSource();
+    // The bed's oscillators follow the same rule as the voice's: started once,
+    // here, where there is a user gesture, and never stopped.
+    startDrone();
 
     return ctx.state;
   }
@@ -275,11 +335,51 @@ export function createThereminAudio(config) {
     if (!started || !(freq > 0)) return;
     const t = ctx.currentTime;
     const glide = Math.max(0.005, config.pitch.portamento);
+    lastFreq = freq;
     nodes.sine.frequency.setTargetAtTime(freq, t, glide);
     nodes.tri.frequency.setTargetAtTime(freq, t, glide);
+    // exprBrightness is 1 until setExpression says otherwise, so the cutoff is
+    // unchanged from the original line when expression is off. Cutoff is
+    // written in ONE place on purpose: two writers racing on the same param
+    // every frame is how you get a filter that flutters.
     nodes.filter.frequency.setTargetAtTime(
-      Math.min(16000, Math.max(cfg.filterMin, freq * cfg.filterKeyFollow)), t, 0.03
+      Math.min(16000, Math.max(cfg.filterMin, freq * cfg.filterKeyFollow * exprBrightness)),
+      t, 0.03
     );
+  }
+
+  /**
+   * Hand movement -> timbre. Takes the object expression.js hands back.
+   * Call it BEFORE setPitch() in the frame so the new brightness lands on the
+   * same cutoff write rather than one frame late.
+   */
+  function setExpression(e) {
+    if (!started || !e) return;
+    const ex = config.expression || {};
+    if (ex.enabled === false) return;
+    const t = ctx.currentTime;
+
+    exprBrightness = 1 + (ex.brightness != null ? ex.brightness : 2.2) * (e.speed01 || 0);
+
+    // Fast hands bring up the triangle: a swoop has edge, a slow approach is
+    // nearly pure sine.
+    nodes.triGain.gain.setTargetAtTime(
+      cfg.harmonicMix + (ex.growl != null ? ex.growl : 0.3) * (e.speed01 || 0), t, 0.08
+    );
+
+    // Vibrato depth follows stillness, so a held note sings and a moving one
+    // doesn't warble through the glissando.
+    const floor = ex.vibratoFloor != null ? ex.vibratoFloor : 0.25;
+    nodes.lfoDepth.gain.setTargetAtTime(
+      cfg.vibratoDepthCents * (floor + (1 - floor) * (e.stillness01 || 0)), t, 0.15
+    );
+
+    // The player's own tremor, straight to detune. A node connection SUMS with
+    // a param's intrinsic value, so writing .detune here rides on top of the
+    // LFO that's connected to it rather than replacing it.
+    const cents = e.tremorCents || 0;
+    nodes.sine.detune.setTargetAtTime(cents, t, 0.02);
+    nodes.tri.detune.setTargetAtTime(cents, t, 0.02);
   }
 
   function setLevel(level) {
@@ -302,7 +402,7 @@ export function createThereminAudio(config) {
       osc.type = 'sine';
       osc.frequency.value = freq;
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(outputBus || ctx.destination);
 
       const t = ctx.currentTime;
       gain.gain.setValueAtTime(0, t);
@@ -331,16 +431,25 @@ export function createThereminAudio(config) {
       } catch (_) { /* ignore teardown noise */ }
       nodes = null;
     }
-    if (trackSource) {
-      try { trackSource.stop(); trackSource.disconnect(); } catch (_) { /* ignore */ }
-      trackSource = null;
+    if (drone) {
+      try { drone.dispose(); } catch (_) { /* ignore */ }
+      drone = null;
     }
     if (trackGain) {
       try { trackGain.disconnect(); } catch (_) { /* ignore */ }
       trackGain = null;
     }
-    trackBuffer = null;
-    trackLoadPromise = null;
+    if (reverb) {
+      try { reverb.dispose(); } catch (_) { /* ignore */ }
+      reverb = null;
+    }
+    try {
+      if (limiterPre) limiterPre.disconnect();
+      if (limiterShaper) limiterShaper.disconnect();
+    } catch (_) { /* ignore */ }
+    limiterPre = null;
+    limiterShaper = null;
+    outputBus = null;
     if (keepAlive) {
       try { keepAlive.pause(); keepAlive.remove(); } catch (_) {}
       keepAlive = null;
@@ -358,6 +467,9 @@ export function createThereminAudio(config) {
     startKeepAlive,
     setPitch,
     setLevel,
+    setExpression,
+    updateDrone,
+    chordTones,
     setMuted,
     setSourcePosition,
     updateListener,
@@ -376,7 +488,7 @@ export function createThereminAudio(config) {
     },
     get resumeError() { return resumeError; },
     get isTrackPlaying() { return trackWanted; },
-    get isTrackLoaded() { return !!trackBuffer; },
+    get isTrackLoaded() { return !!drone; },
     get trackLoadError() { return trackLoadError; }
   };
 }
