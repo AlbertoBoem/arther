@@ -96,7 +96,24 @@ export const CONFIG = {
     keepAlive: true,          // also hold focus with a silent looping <audio>
     // The reference app has no visibility handling at all and works. Muting on
     // a 'hidden' report was silencing this app permanently, so it's off.
-    muteWhenHidden: false
+    muteWhenHidden: false,
+
+    // Soft clipper on the master bus. The destination clips hard at 1.0 and
+    // nothing else in this graph limits: the voice reaches maxGain 0.85 and
+    // the bed peaks near 0.6, so together they were asking for 1.45 and
+    // getting square edges. A WaveShaper is a lookup table — stateless, no
+    // feedback, nothing that can ring or run away.
+    //
+    // enabled:false makes outputBus = ctx.destination, i.e. exactly the graph
+    // this build had before. That's the A/B test if anything sounds off.
+    limiter: {
+      enabled: true,
+      inputGain: 0.7,   // pulls the sum into range before the curve
+      drive: 1.2        // knee. inputGain x drive/tanh(drive) = 1.008, so
+                        // quiet signals pass through at unity and only loud
+                        // ones bend. Raise drive for more squash and more
+                        // harmonics; lower it toward 0.5 for nearly linear
+    }
   },
 
   gestures: {
@@ -105,26 +122,113 @@ export const CONFIG = {
     reanchorHoldMs: 700
   },
 
-  backingTrack: {
-    // Path to a looping background audio file, relative to index.html.
-    // Any format the browser can decode (mp3, m4a/aac, ogg, wav) works.
+  // Generative harmonic bed under the instrument. Took over the backing
+  // track's slot: same knob, same gain node, same on/off, but synthesised, so
+  // there's no file to fetch and nothing to repeat.
+  drone: {
+    // 'tanpura' — a static Indian-style drone: four strings plucked in
+    //             rotation over a shimmering bridge, no chord changes at all.
+    // 'pad'     — the earlier behaviour: a slow quartal progression.
+    character: 'tanpura',
+
+    // Kept from the old backingTrack block because applyTrackGain() still
+    // reads exactly these two.
     //
-    // 'local'  — you pick a file from your own computer at launch, via the
-    //            file picker on the 2D screen. Nothing to commit to the repo;
-    //            fastest way to iterate while testing in a desktop browser.
-    // 'hosted' — fetched automatically from `url` below at boot. This is the
-    //            one Spectacles needs: a headset has no file picker, so the
-    //            track has to be reachable over the network. Push the file
-    //            to your GitHub repo and point `url` at its raw link.
-    source: 'hosted',
+    // Headroom matters: nothing in this graph limits. The bed's voices sum to
+    // ~0.95 before this gain and the played note reaches maxGain 0.85 on top,
+    // so the total has to stay under 1.0 or the destination clips — and
+    // clipped sustained tones sound like something is broken.
+    //
+    // THIS IS THE DRONE'S VOLUME KNOB. The tanpura spends most of its time at
+    // the sustain floor rather than held open like the pad did, so it needs a
+    // higher number here to land at the same perceived level.
+    volume: 0.6,            // gain while playing (0..1, independent of maxGain)
+    fadeSec: 0.6,           // fade on toggle. A bed should arrive, not switch on
 
-    // Used only when source is 'hosted'. Example, once the file is pushed:
-    // 'https://raw.githubusercontent.com/<user>/<repo>/<branch>/backing-track.mp3'
-    url: 'https://raw.githubusercontent.com/AlbertoBoem/arther/main/waltz.mp3', 
+    rootMidi: 55,           // Sa. G3 — an octave above where this started,
+                            // because open-ear speakers cannot move air at
+                            // 98Hz. Drop to 43 for headphones or desktop.
 
-    loop: true,
-    volume: 0.7,     // gain while playing (0..1, independent of the synth's maxGain)
-    fadeSec: 0.08       // fade-in/out time on toggle, so it doesn't click on/off
+    // ---- tanpura ---------------------------------------------------------
+    // Semitone offsets from Sa: Pa, Sa, Sa, Sa'. The real fourth string is an
+    // octave BELOW Sa (-12); at 98Hz that is inaudible on the glasses, so it
+    // goes up instead. Use [-5, 0, 0, -12] on headphones.
+    tuning: [-5, 0, 0, 12],
+
+    pluckSec: 1.35,         // seconds between strings. The classic cycle is
+                            // slow — under ~0.8 it starts to sound busy
+    pluckAttackSec: 0.12,
+    pluckDecaySec: 2.8,     // long enough that three strings overlap
+    pluckSustain: 0.45,     // level a string falls back to, never to silence.
+                            // Also the single biggest influence on how loud
+                            // the bed FEELS, since it is where the strings sit
+                            // between plucks. Near 1.0 the plucking disappears
+                            // into a steady pad
+
+    // Jivari: the bright buzz of the bridge. A sawtooth through a resonant
+    // bandpass high above the fundamental, swept by one very slow LFO.
+    buzzMix: 0.5,           // how much buzz against the plain fundamental.
+                            // Makeup gain for the bandpass is applied inside
+                            // drone.js, so 0.5 really is half-and-half now
+    buzzRatio: 7,           // bandpass centre, as a multiple of the string
+    buzzQ: 6,               // resonance. Past ~10 it whistles
+    buzzSweepHz: 420,       // how far the shimmer moves that centre
+    buzzRateHz: 0.07,       // ~14s per cycle: breathing, not modulation
+
+    // ---- pad (character: 'pad' only) -------------------------------------
+    voices: 3,
+    progression: [
+      [0, 7, 14],           // fourths, fifths and ninths, NO thirds — the
+      [-2, 5, 12],          // pitch field is continuous, so a defined third
+      [-5, 2, 9],           // would make half the glide sound wrong
+      [0, 7, 12]
+    ],
+    chordHoldSec: 13,
+    idleRate: 0.3,
+    glideSec: 2.4,
+    triangleMix: 0.45,
+
+    // ---- both ------------------------------------------------------------
+    playingLevel: 0.04,     // player level above which "playing" counts
+    detuneSpread: 7,        // cents between a voice's two oscillators
+    filterHz: 2600,         // brighter than a pad wants: the buzz lives up here
+    filterQ: 0.4,
+    brightenWithPlay: 600   // Hz the filter opens by over a long session
+  },
+
+  // Hand MOVEMENT -> timbre. See expression.js.
+  expression: {
+    enabled: true,
+    speedFull: 1.1,         // palm speed counted as full tilt, m/s
+    speedTau: 0.13,         // smoothing on velocity; frame deltas are noisy
+
+    stillSpeed: 0.055,      // m/s below which the hand counts as held
+    stillRiseSec: 0.7,      // how long stillness takes to bloom
+    stillFallSec: 0.2,      // and how fast movement cancels it
+
+    brightness: 2.2,        // filter cutoff multiplier at full speed
+    growl: 0.30,            // extra triangle in the mix at full speed
+    vibratoFloor: 0.25,     // LFO depth when moving, as a fraction of
+                            // audio.vibratoDepthCents (1.0 = no stillness effect)
+
+    // Tremor -> detune: the difference between a slow and a fast follower of
+    // the pitch, which is a band-pass around 1.5-9Hz. Slower than that is the
+    // melody; faster is tracking noise.
+    tremorSlowTau: 0.24,
+    tremorFastTau: 0.028,
+    tremorGain: 2.6,        // how much of the natural wobble reaches detune
+    tremorMaxCents: 45,     // ceiling, or a tracking glitch becomes a siren
+    tremorNeedsStillness: true
+  },
+
+  // Parallel send off the voice's amp. Four combs and two allpasses — no
+  // impulse response, no decodeAudioData, nothing that can block the thread.
+  reverb: {
+    enabled: true,
+    wet: 0.22,              // small room. Past ~0.35 the theremin loses its edge
+    decaySec: 1.9,
+    preDelaySec: 0.012,
+    dampingHz: 3200         // the high end dies first, as in a real room
   },
 
   visuals: {

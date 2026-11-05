@@ -4,6 +4,7 @@ import { OnePole, distanceToSegment, pitchPosition, frequencyFor, levelFor, snap
 import { createHandTracking } from './hands.js';
 import { createTheremin, createAudioPrompt } from './thereminModel.js';
 import { createThereminAudio } from './thereminAudio.js';
+import { createExpression } from './expression.js';
 
 /**
  * Aether — a WebXR theremin for Snapchat Spectacles.
@@ -25,9 +26,8 @@ import { createThereminAudio } from './thereminAudio.js';
 const enterButton = document.getElementById('enter');
 const testButton = document.getElementById('test');
 const statusLine = document.getElementById('status');
-const trackPicker = document.getElementById('trackPicker');
-const trackFileInput = document.getElementById('trackFile');
-const trackFileName = document.getElementById('trackFileName');
+// (the backing-track file picker was removed with the mp3 — the bed is
+// generated now, so there is nothing to choose)
 
 function setStatus(message, isError = false) {
   statusLine.textContent = message;
@@ -50,7 +50,6 @@ let sessionStartTime = 0;
 let lastFrameTime = 0;
 let paused = false;
 let volumeHandSeen = false;
-let trackObjectUrl = null;   // revoked once its bytes are safely decoded
 
 let bothPinchMs = 0;
 let hudKnobTouching = false;
@@ -63,6 +62,9 @@ let lastContextState = 'unknown';
 
 const pitchSmoother = new OnePole(CONFIG.pitch.smoothingTau, 0);
 const levelSmoother = new OnePole(CONFIG.volume.smoothingTau, 0);
+
+// Hand movement -> timbre. Pure maths, no audio nodes, no allocation per frame.
+const expression = createExpression(CONFIG);
 
 let lastPitchDistance = CONFIG.pitch.farDistance;
 let lastVolumeDistance = CONFIG.volume.nearDistance;
@@ -88,43 +90,15 @@ function withTimeout(promise, ms) {
 }
 
 /**
- * Wires up the backing loop per CONFIG.backingTrack.source:
- *  - 'local'  reveals the file picker and loads whatever the person chooses,
- *    via a blob URL that's revoked once its bytes are safely decoded.
- *  - 'hosted' fetches CONFIG.backingTrack.url immediately, no interaction
- *    needed — this is the path Spectacles has to use, since there's no file
- *    picker in a headset.
+ * The background bed used to be an mp3: fetched or picked from disk, decoded,
+ * looped. It's a generated drone now (drone.js), built with the rest of the
+ * audio graph, so there is nothing left to load or wire up here.
+ *
+ * The call site in boot() is kept so the shape of startup doesn't change, and
+ * so this is the obvious place to put anything the bed needs later.
  */
 function setupBackingTrack() {
-  const cfg = CONFIG.backingTrack;
-  if (!cfg) return;
-
-  if (cfg.source === 'local') {
-    if (trackPicker) trackPicker.style.display = 'flex';
-    if (trackFileInput) {
-      trackFileInput.addEventListener('change', () => {
-        const file = trackFileInput.files && trackFileInput.files[0];
-        if (!file || !audio) return;
-
-        if (trackObjectUrl) { URL.revokeObjectURL(trackObjectUrl); trackObjectUrl = null; }
-        trackObjectUrl = URL.createObjectURL(file);
-        if (trackFileName) trackFileName.textContent = `Loading ${file.name}…`;
-
-        audio.loadBackingTrack(trackObjectUrl).then((ok) => {
-          if (trackFileName) {
-            trackFileName.textContent = ok
-              ? `${file.name} — ready (tap the left knob to play)`
-              : `${file.name} — failed to decode, try another file`;
-          }
-          // decodeAudioData has already copied the bytes out of the blob by
-          // the time the promise resolves, so the object URL can go.
-          if (trackObjectUrl) { URL.revokeObjectURL(trackObjectUrl); trackObjectUrl = null; }
-        });
-      });
-    }
-  } else if (cfg.url) {
-    audio.loadBackingTrack(cfg.url);
-  }
+  /* nothing to do: the drone is created in thereminAudio's build() */
 }
 
 async function boot() {
@@ -145,11 +119,8 @@ async function boot() {
     return;
   }
 
-  // Backing loop: either wait for the person to pick a file from their own
-  // computer, or fetch a hosted URL automatically — see CONFIG.backingTrack.source.
-  // Loading needs no user gesture (only starting playback does), so the
-  // 'hosted' fetch can start right away, while the person is still looking
-  // at this screen.
+  // The bed is built with the rest of the audio graph above, so there is
+  // nothing to load here any more — this is a no-op kept as a hook.
   setupBackingTrack();
 
   setStatus('Checking WebXR…');
@@ -517,6 +488,10 @@ function handleReanchorGesture(dt) {
       bothPinchMs = -1500;      // debounce so it can't retrigger immediately
       if (audio && audio.isReady) audio.setLevel(0);
       levelSmoother.reset(0);
+      // The instrument moves, so the hand's distance to the rod jumps: without
+      // this the jump reads as a huge tremor and detunes the first note after
+      // a re-anchor.
+      expression.reset();
       anchorInstrument();
     }
   } else if (bothPinchMs > 0) {
@@ -598,6 +573,14 @@ function drive(dt) {
   const snapped = !!(CONFIG.pitch.scale && CONFIG.pitch.scale.length && CONFIG.pitch.snapStrength > 0);
   if (snapped) frequency = snapFrequency(frequency, CONFIG.pitch);
 
+  // Expression reads the UNSMOOTHED frequency on purpose. pitchSmoother's
+  // 45ms tau is a ~3.5Hz lowpass, which is sitting right on top of the 4-7Hz
+  // hand tremor it wants to measure — feed it smoothT and the vibrato is
+  // mostly gone before it arrives.
+  const expr = expression.update(
+    dt, pitchHand.palm, pitchHand.tracked, frequencyFor(targetT, CONFIG.pitch)
+  );
+
   // ---- volume: distance from the loop. Holding the last level through a
   // tracking dropout is far more playable than cutting to silence.
   if (volumeHand.tracked) {
@@ -632,8 +615,13 @@ function drive(dt) {
   const level = levelSmoother.process(targetLevel, dt);
 
   if (audio && audio.isReady) {
+    // setExpression first: it decides the cutoff multiplier that setPitch
+    // then applies, so this order keeps brightness and note on the same frame.
+    audio.setExpression(expr);
     audio.setPitch(frequency);
     audio.setLevel(level);
+    // The bed's own clock. No-op while the knob has it switched off.
+    audio.updateDrone(dt, level / CONFIG.volume.maxGain);
   }
 
   const note = describeFrequency(frequency);
