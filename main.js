@@ -378,6 +378,8 @@ function anchorInstrument() {
   // Turn the cabinet so its front (+Z) faces the player.
   theremin.group.rotation.set(0, Math.atan2(-headDir.x, -headDir.z), 0);
   theremin.group.visible = true;
+  // In local-floor space y = 0 is the floor, so it sits -y below the group.
+  if (theremin.setFloor) theremin.setFloor(floorReferenceSpace ? -theremin.group.position.y : null);
   theremin.syncMatrices();
 
   theremin.getCentre(instrumentCentre);

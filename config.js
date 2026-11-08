@@ -19,8 +19,17 @@ export const CONFIG = {
   placement: {
     // No hit-testing on Spectacles (it's emulated), so the instrument is
     // anchored to wherever your head was pointing a moment after entry.
-    distance: 0.62,        // metres in front of the head
-    heightOffset: -0.28,   // relative to head height: roughly chest height
+    // The RCA-style cabinet is deeper and its rod stands at the back corner,
+    // so it sits a little closer than the old box did to keep the rod in reach.
+    distance: 0.55,        // metres in front of the head
+    // Sized against the RCA Victor cabinet and period photos of players:
+    // antenna tip at eye level, top of the cabinet at chest height (~1.16m
+    // for a 1.60m eye height; the RCA's is 1.18m). The model is drawn at
+    // roughly RCA proportions, then scaled down a little so it fits the
+    // Spectacles' narrow field of view without looking like a toy: at 0.85
+    // the cabinet is 34cm wide against the RCA's 48cm.
+    scale: 0.85,           // uniform size of the whole instrument
+    heightOffset: -0.50,   // group origin (≈ loop height) relative to the eyes
     settleDelayMs: 1400    // let the tracker stabilise before anchoring
   },
 
@@ -43,7 +52,8 @@ export const CONFIG = {
 
   volume: {
     hand: 'left',
-    nearDistance: 0.09,    // palm on/over the loop ring -> silence (matches LOOP.r = 0.09)
+    nearDistance: 0.077,   // palm on/over the loop ring -> silence. Matches the
+                           // drawn ring: LOOP.r 0.09 x placement.scale 0.85
     farDistance: 0.18,//0.30,     // palm this far from the loop centre -> full level
     // Outer edge of the field. Past this distance from the loop centre the
     // volume fades back to silence (and is hard zero beyond it), like a real
@@ -234,7 +244,16 @@ export const CONFIG = {
   visuals: {
     readoutHz: 8,        // canvas texture updates per second (uploads are costly)
     fieldRings: false,    // concentric guides showing where the octaves sit
-    dimWhenIdle: 0.35
+    dimWhenIdle: 0.35,
+    // The "old photograph" look of the RCA-style cabinet (thereminModel.js).
+    photo: {
+      grain: 0.16,          // film grain amplitude (0 = clean)
+      flicker: 0.06,        // slow exposure flicker (0 = steady)
+      vignette: 0.55,       // brightness at the instrument's extremities (1 = none)
+      woodColor: 0x765234,  // lacquered wood: brighter = more visible on Spectacles
+      woodOpacity: 0.9,
+      legsToFloor: true     // stretch the legs down to the floor when it is known
+    }
   },
 
   debug: {
