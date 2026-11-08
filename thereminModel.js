@@ -105,7 +105,9 @@ const PHOTO_FRAG = /* glsl */`
       float spec = pow( max( dot( reflect( -pv, pn ), pl ), 0.0 ), 14.0 );
       photoK = 0.38 + 0.45 * lam + 1.6 * spec;
     #else
-      photoK = 0.42 + 0.7 * lam + 0.35 * pow( 1.0 - ndv, 3.0 );   // lacquer sheen at grazing angles
+      // High floor: faces turned from the light must stay bright enough to
+      // read as solid on a see-through display.
+      photoK = 0.62 + 0.5 * lam + 0.3 * pow( 1.0 - ndv, 3.0 );   // lacquer sheen at grazing angles
     #endif
   #endif
   #ifdef PHOTO_WOOD
@@ -113,7 +115,7 @@ const PHOTO_FRAG = /* glsl */`
     vec3 wp = vPhotoObj * 38.0;
     float fig = sin( wp.x * 1.3 + wp.z * 1.3 + sin( wp.y * 0.35 + wp.x * 0.2 ) * 2.4 );
     float fine = sin( wp.x * 7.0 + wp.z * 6.0 + wp.y * 0.25 );
-    photoK *= 0.74 + 0.18 * fig + 0.08 * fine;
+    photoK *= 0.82 + 0.12 * fig + 0.06 * fine;
   #endif
   #ifdef PHOTO_FADE
     photoK *= smoothstep( PHOTO_FADE_LO, PHOTO_FADE_HI, vPhotoObj.y );
@@ -377,7 +379,7 @@ export function createTheremin(config) {
   // print a colour change wouldn't read, a lit lamp does.
   const plateY = BODY.frontTop - 0.07;
   const plateZ = BODY.d / 2 + 0.002;
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.04, 0.004), photoMat(0x2a1e14, 0.6, { lit: true }));
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.04, 0.004), photoMat(0x4a3624, 0.95, { lit: true }));
   plate.position.set(0, plateY, plateZ);
   group.add(plate);
   const plateRim = new THREE.LineLoop(rectGeometry(0.15, 0.04), photoMat(NICKEL, 0.8, { line: true }));

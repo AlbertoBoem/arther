@@ -249,9 +249,10 @@ export const CONFIG = {
     photo: {
       grain: 0.16,          // film grain amplitude (0 = clean)
       flicker: 0.06,        // slow exposure flicker (0 = steady)
-      vignette: 0.55,       // brightness at the instrument's extremities (1 = none)
-      woodColor: 0x765234,  // lacquered wood: brighter = more visible on Spectacles
-      woodOpacity: 0.9,
+      vignette: 0.8,        // brightness at the instrument's extremities (1 = none)
+      // On an additive display brightness IS solidity: dark reads as see-through.
+      woodColor: 0xa47650,  // lacquered wood: brighter = more solid on Spectacles
+      woodOpacity: 1.0,
       legsToFloor: true     // stretch the legs down to the floor when it is known
     }
   },
