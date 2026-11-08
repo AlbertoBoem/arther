@@ -144,7 +144,6 @@
     box-shadow: 0 0 22px rgba(127, 230, 255, .5), inset 0 0 16px rgba(127, 230, 255, .22);
   }
   #test.secondary:disabled { opacity: .35; box-shadow: none; cursor: default; }
-
   #status {
     min-height: 1.4em;
     font-size: 12px;
@@ -159,20 +158,32 @@
     opacity: .7;
   }
 
-  /* Wireframe theremin: same geometry language as thereminModel.js — amber
-     cabinet and pitch antenna on the right, cyan volume loop on the left. */
-  .instrument { width: min(78vw, 340px); height: auto; overflow: visible; }
-  .instrument .bead { animation: ride 5s ease-in-out infinite; }
-  .instrument .rung { animation: level 2.6s ease-in-out infinite; }
-  .instrument .rung:nth-child(2) { animation-delay: .15s; }
-  .instrument .rung:nth-child(3) { animation-delay: .3s; }
-  .instrument .rung:nth-child(4) { animation-delay: .45s; }
-  .instrument .rung:nth-child(5) { animation-delay: .6s; }
-  .instrument .rung:nth-child(6) { animation-delay: .75s; }
-  @keyframes ride  { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-110px); } }
-  @keyframes level { 0%, 100% { opacity: .15; } 50% { opacity: .9; } }
+  /* The RCA theremin, drawn like the headset shows it: sepia print, glowing
+     nickel, legs fading to the floor. Generated from thereminModel.js's
+     dimensions, so the launch screen and the AR scene are one object. */
+  .instrument { height: min(44vh, 380px); width: auto; max-width: 78vw; overflow: visible; }
+  .instrument .edge   { stroke: #d9b98a; stroke-width: .5; stroke-opacity: .7; stroke-linejoin: round; }
+  .instrument .mould  { fill: none; stroke: #9c7650; stroke-width: .45; stroke-opacity: .8; }
+  .instrument .plate  { fill: #2a1e14; stroke: #f1e3c6; stroke-width: .5; stroke-opacity: .85; }
+  .instrument .metal  { filter: url(#glow); }
+  .instrument .knob, .instrument .tip, .instrument .bush, .instrument .screw { fill: #f1e3c6; }
+  .instrument .insulator { fill: #9c7650; }
+  .instrument .rod    { stroke: #f1e3c6; stroke-width: 1.6; stroke-linecap: round; }
+  .instrument .halo   { stroke: #d9b98a; stroke-width: 6; stroke-opacity: .08; }
+  .instrument .loop   { fill: none; stroke: #e9dfca; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+  .instrument .bead   { fill: #fff6e2; fill-opacity: .8; animation: ride 5s ease-in-out infinite; }
+  .instrument .rung   { stroke: #e9dfca; stroke-width: 1; animation: level 2.6s ease-in-out infinite; }
+  .instrument .lamp   { fill: #fff6e2; }
+  .instrument .lamp-off { opacity: .3; }
+  .instrument .lamp-glow { fill: #ffd9a0; opacity: .5; animation: lamp 3.2s ease-in-out infinite; }
+  .instrument .print  { animation: flicker 7s steps(1) infinite; }
+  @keyframes ride    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-79px); } }
+  @keyframes level   { 0%, 100% { opacity: .15; } 50% { opacity: .9; } }
+  @keyframes lamp    { 0%, 100% { opacity: .35; } 50% { opacity: .6; } }
+  /* an old print under an uneven lamp: mostly steady, the odd dark frame */
+  @keyframes flicker { 0%, 100% { opacity: 1; } 31% { opacity: .9; } 33% { opacity: 1; } 72% { opacity: .94; } 74% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    .instrument .bead, .instrument .rung { animation: none; }
+    .instrument .bead, .instrument .rung, .instrument .lamp-glow, .instrument .print { animation: none; }
   }
 
 
@@ -186,53 +197,120 @@
       <p class="sub">Theremin for Spectacles</p>
     </div>
 
-    <svg class="instrument" viewBox="0 0 380 250" role="img" aria-label="Wireframe theremin with a pitch antenna on the right and a volume loop on the left">
+    <svg class="instrument" viewBox="-107.8 -163.5 185.3 433.5" role="img" aria-label="A 1929 RCA theremin drawn like an old sepia photograph: a slant-top wooden cabinet on four tall legs, a pitch antenna rising at the back right and a volume loop on the left side">
       <defs>
-        <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-          <feGaussianBlur stdDeviation="2.2" result="b"/>
+        <!-- soft glow for the plated metal, like highlights blooming on an old print -->
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="1.4" result="b"/>
           <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
         </filter>
+        <!-- film grain: multiplies the drawing by fine noise, so only the object gets it -->
+        <filter id="grain" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="7" result="noise"/>
+          <feColorMatrix in="noise" type="saturate" values="0" result="mono"/>
+          <feComposite in="SourceGraphic" in2="mono" operator="arithmetic" k1="0.7" k2="0.68" result="grained"/>
+          <feComposite in="grained" in2="SourceGraphic" operator="in"/>
+        </filter>
+        <!-- the legs dissolve toward the floor, as in the headset -->
+        <linearGradient id="legfadeGrad" gradientUnits="userSpaceOnUse" x1="0" y1="94.3" x2="0" y2="225.7">
+          <stop offset="0" stop-color="#fff"/>
+          <stop offset=".55" stop-color="#fff"/>
+          <stop offset="1" stop-color="#000"/>
+        </linearGradient>
+        <mask id="legfade" maskUnits="userSpaceOnUse" x="-107.8" y="-163.5" width="185.3" height="433.5">
+          <rect x="-107.8" y="-163.5" width="185.3" height="433.5" fill="url(#legfadeGrad)"/>
+        </mask>
       </defs>
 
-      <!-- pitch side: octave rings, cabinet, knobs, antenna (amber) -->
-      <g filter="url(#glow)" fill="none" stroke-linejoin="round">
-        <g stroke="#ffc978" stroke-width="1" opacity=".22">
-          <ellipse cx="277" cy="95" rx="40"  ry="11"/>
-          <ellipse cx="277" cy="95" rx="70"  ry="20"/>
-          <ellipse cx="277" cy="95" rx="100" ry="28"/>
+      <!-- Generated from the model's own dimensions in thereminModel.js,
+           projected at the preview's three-quarter angle. -->
+      <g class="print" filter="url(#grain)">
+        <g class="legs" mask="url(#legfade)">
+        <path d="M25.5,213.0 L28.9,212.4 L31.1,81.2 L24.9,82.2 Z" fill="#34281c"/>
+        <path d="M23.7,212.0 L25.5,213.0 L24.9,82.2 L21.5,80.4 Z" fill="#685038"/>
+        <path d="M25.5,213.0 L28.9,212.4 L31.1,81.2 L24.9,82.2 Z" class="edge" fill="none"/>
+        <path d="M23.7,212.0 L25.5,213.0 L24.9,82.2 L21.5,80.4 Z" class="edge" fill="none"/>
+        <path d="M-53.4,225.7 L-50.0,225.2 L-47.9,94.0 L-54.1,95.0 Z" fill="#34281c"/>
+        <path d="M-55.3,224.7 L-53.4,225.7 L-54.1,95.0 L-57.5,93.2 Z" fill="#685038"/>
+        <path d="M-53.4,225.7 L-50.0,225.2 L-47.9,94.0 L-54.1,95.0 Z" class="edge" fill="none"/>
+        <path d="M-55.3,224.7 L-53.4,225.7 L-54.1,95.0 L-57.5,93.2 Z" class="edge" fill="none"/>
+        <path d="M51.9,227.2 L55.3,226.7 L57.5,95.5 L51.3,96.5 Z" fill="#34281c"/>
+        <path d="M50.0,226.2 L51.9,227.2 L51.3,96.5 L47.9,94.7 Z" fill="#685038"/>
+        <path d="M51.9,227.2 L55.3,226.7 L57.5,95.5 L51.3,96.5 Z" class="edge" fill="none"/>
+        <path d="M50.0,226.2 L51.9,227.2 L51.3,96.5 L47.9,94.7 Z" class="edge" fill="none"/>
+        <path d="M-27.1,240.0 L-23.7,239.4 L-21.5,108.3 L-27.7,109.3 Z" fill="#34281c"/>
+        <path d="M-28.9,239.0 L-27.1,240.0 L-27.7,109.3 L-31.1,107.4 Z" fill="#685038"/>
+        <path d="M-27.1,240.0 L-23.7,239.4 L-21.5,108.3 L-27.7,109.3 Z" class="edge" fill="none"/>
+        <path d="M-28.9,239.0 L-27.1,240.0 L-27.7,109.3 L-31.1,107.4 Z" class="edge" fill="none"/>
         </g>
-        <g stroke="#ffc978" stroke-width="1.4" opacity=".9">
-          <rect x="95" y="178" width="190" height="52"/>
-          <polygon points="95,178 113,164 303,164 285,178"/>
-          <polygon points="285,178 303,164 303,216 285,230"/>
+        <path d="M-29.5,111.1 L63.5,96.0 L63.5,87.7 L-29.5,102.7 Z" fill="#35291d"/>
+        <path d="M-63.5,92.6 L-29.5,111.1 L-29.5,102.7 L-63.5,84.3 Z" fill="#685039"/>
+        <path d="M-29.5,102.7 L63.5,87.7 L29.5,69.3 L-63.5,84.3 Z" fill="#8f6e4e"/>
+        <path d="M-29.5,111.1 L63.5,96.0 L63.5,87.7 L-29.5,102.7 Z" class="edge" fill="none"/>
+        <path d="M-63.5,92.6 L-29.5,111.1 L-29.5,102.7 L-63.5,84.3 Z" class="edge" fill="none"/>
+        <path d="M-29.5,102.7 L63.5,87.7 L29.5,69.3 L-63.5,84.3 Z" class="edge" fill="none"/>
+        <path d="M-28.3,101.5 L-28.3,23.9 L-52.9,-13.3 L-59.5,-16.9 L-59.5,84.6 Z" fill="#685039"/>
+        <path d="M-28.3,101.5 L59.5,87.3 L59.5,9.7 L-28.3,23.9 Z" fill="#35291d"/>
+        <path d="M-28.3,23.9 L59.5,9.7 L34.9,-27.5 L-52.9,-13.3 Z" fill="#7a5e43"/>
+        <path d="M-52.9,-13.3 L34.9,-27.5 L28.3,-31.0 L-59.5,-16.9 Z" fill="#8f6e4e"/>
+        <path d="M-28.3,101.5 L-28.3,23.9 L-52.9,-13.3 L-59.5,-16.9 L-59.5,84.6 Z" class="edge" fill="none"/>
+        <path d="M-28.3,101.5 L59.5,87.3 L59.5,9.7 L-28.3,23.9 Z" class="edge" fill="none"/>
+        <path d="M-28.3,23.9 L59.5,9.7 L34.9,-27.5 L-52.9,-13.3 Z" class="edge" fill="none"/>
+        <path d="M-52.9,-13.3 L34.9,-27.5 L28.3,-31.0 L-59.5,-16.9 Z" class="edge" fill="none"/>
+        <path d="M-53.8,-12.9 L36.6,-27.5 L36.6,-29.4 L-53.8,-14.8 Z" fill="#35291d"/>
+        <path d="M-61.1,-16.9 L-53.8,-12.9 L-53.8,-14.8 L-61.1,-18.8 Z" fill="#685039"/>
+        <path d="M-53.8,-14.8 L36.6,-29.4 L29.3,-33.4 L-61.1,-18.8 Z" fill="#8f6e4e"/>
+        <path d="M-53.8,-12.9 L36.6,-27.5 L36.6,-29.4 L-53.8,-14.8 Z" class="edge" fill="none"/>
+        <path d="M-61.1,-16.9 L-53.8,-12.9 L-53.8,-14.8 L-61.1,-18.8 Z" class="edge" fill="none"/>
+        <path d="M-53.8,-14.8 L36.6,-29.4 L29.3,-33.4 L-61.1,-18.8 Z" class="edge" fill="none"/>
+        <path d="M-29.2,24.7 L61.2,10.1 L61.6,8.7 L-28.8,23.2 Z" fill="#372a1e"/>
+        <path d="M-54.6,-13.7 L-29.2,24.7 L-28.8,23.2 L-54.2,-15.2 Z" fill="#685039"/>
+        <path d="M-28.8,23.2 L61.6,8.7 L36.2,-29.8 L-54.2,-15.2 Z" fill="#7a5e43"/>
+        <path d="M-29.2,24.7 L61.2,10.1 L35.8,-28.3 L-54.6,-13.7 Z" fill="#7a5e43"/>
+        <path d="M-29.2,24.7 L61.2,10.1 L61.6,8.7 L-28.8,23.2 Z" class="edge" fill="none"/>
+        <path d="M-54.6,-13.7 L-29.2,24.7 L-28.8,23.2 L-54.2,-15.2 Z" class="edge" fill="none"/>
+        <path d="M-28.8,23.2 L61.6,8.7 L36.2,-29.8 L-54.2,-15.2 Z" class="edge" fill="none"/>
+        <path d="M-29.2,24.7 L61.2,10.1 L35.8,-28.3 L-54.6,-13.7 Z" class="edge" fill="none"/>
+        <path d="M-30.0,21.8 L60.0,7.3 L60.0,3.5 L-30.0,18.0 Z" fill="#35291d"/>
+        <path d="M-31.7,20.9 L-30.0,21.8 L-30.0,18.0 L-31.7,17.1 Z" fill="#685039"/>
+        <path d="M-30.0,18.0 L60.0,3.5 L58.3,2.6 L-31.7,17.1 Z" fill="#8f6e4e"/>
+        <path d="M-30.0,21.8 L60.0,7.3 L60.0,3.5 L-30.0,18.0 Z" class="edge" fill="none"/>
+        <path d="M-31.7,20.9 L-30.0,21.8 L-30.0,18.0 L-31.7,17.1 Z" class="edge" fill="none"/>
+        <path d="M-30.0,18.0 L60.0,3.5 L58.3,2.6 L-31.7,17.1 Z" class="edge" fill="none"/>
+        <path d="M-22.6,94.8 L54.2,82.4 L54.2,16.7 L-22.6,29.1 Z" class="mould"/>
+        <path d="M-31.7,94.0 L-56.9,80.4 L-56.9,14.7 L-31.7,28.3 Z" class="mould"/>
+        <path d="M-0.4,41.2 L32.5,35.9 L32.5,26.3 L-0.4,31.6 Z" class="plate"/>
+        <g class="metal">
+        <circle cx="8.0" cy="35.6" r="2.6" class="knob"/>
+        <circle cx="25.6" cy="32.7" r="2.6" class="knob"/>
         </g>
-        <g stroke="#ffc978" stroke-width="1.6" opacity=".85">
-          <ellipse cx="168" cy="171" rx="7" ry="2.4"/>
-          <ellipse cx="207" cy="171" rx="7" ry="2.4"/>
+        <circle cx="13.5" cy="34.5" r="4.5" class="lamp-glow lamp-a"/>
+        <circle cx="13.5" cy="34.5" r="1.3" class="lamp lamp-a"/>
+        <circle cx="19.6" cy="33.5" r="1.3" class="lamp lamp-off"/>
+        <circle cx="55.9" cy="26.1" r="0.9" class="screw"/>
+        <circle cx="55.9" cy="73.8" r="0.9" class="screw"/>
+        <g class="metal"><path d="M20.4,-30.1 L26.8,-30.1 L25.8,-36.3 L21.4,-36.3 Z" class="insulator"/>
+        <line x1="23.6" y1="-30.1" x2="23.6" y2="-149.5" class="halo"/>
+        <line x1="23.6" y1="-30.1" x2="23.6" y2="-149.5" class="rod"/>
+        <circle cx="23.6" cy="-149.5" r="1.9" class="tip"/>
+        <circle class="bead" cx="23.6" cy="-58.7" r="3.6"/></g>
+        <g class="metal"><path d="M-40.4,9.2 L-45.1,10.0 L-49.8,10.7 L-49.1,11.7 L-48.8,12.7 L-49.0,13.6 L-49.7,14.6 L-50.9,15.5 L-52.5,16.4 L-54.5,17.1 L-56.9,17.8 L-59.6,18.4 L-62.6,18.8 L-65.7,19.1 L-68.9,19.3 L-72.2,19.3 L-75.5,19.2 L-78.7,19.0 L-81.7,18.6 L-84.6,18.1 L-87.1,17.4 L-89.3,16.7 L-91.0,15.9 L-92.4,15.0 L-93.3,14.1 L-93.8,13.1 L-93.7,12.1 L-93.2,11.2 L-92.2,10.2 L-90.7,9.3 L-88.9,8.5 L-86.6,7.8 L-84.0,7.2 L-81.2,6.7 L-78.1,6.4 L-74.9,6.1 L-71.6,6.1 L-68.3,6.1 L-65.1,6.3 L-62.0,6.7 L-59.1,7.1 L-56.4,7.7 L-54.1,8.4 L-49.4,7.7 L-44.7,6.9" class="loop"/>
+        <circle cx="-47.1" cy="7.3" r="2.0" class="bush"/>
+        <circle cx="-42.8" cy="9.6" r="2.0" class="bush"/>
         </g>
-        <line x1="277" y1="178" x2="277" y2="24" stroke="#ffc978" stroke-width="9" opacity=".15"/>
-        <line x1="277" y1="178" x2="277" y2="24" stroke="#fff4d6" stroke-width="2.4"/>
-        <circle class="bead" cx="277" cy="150" r="5.5" fill="#fff4d6" fill-opacity=".55" stroke="#fff4d6" stroke-width="1"/>
+        <g class="meter">
+        <line class="rung" style="animation-delay:0.00s" x1="-75.3" y1="5.0" x2="-67.4" y2="3.7"/>
+        <line class="rung" style="animation-delay:0.15s" x1="-75.3" y1="1.0" x2="-67.4" y2="-0.2"/>
+        <line class="rung" style="animation-delay:0.30s" x1="-75.3" y1="-2.9" x2="-67.4" y2="-4.2"/>
+        <line class="rung" style="animation-delay:0.45s" x1="-75.3" y1="-6.8" x2="-67.4" y2="-8.1"/>
+        <line class="rung" style="animation-delay:0.60s" x1="-75.3" y1="-10.8" x2="-67.4" y2="-12.1"/>
+        <line class="rung" style="animation-delay:0.75s" x1="-75.3" y1="-14.7" x2="-67.4" y2="-16.0"/>
+        </g>
       </g>
 
-      <!-- volume side: loop, stem, dead-zone bubble, level ladder (cyan) -->
-      <g filter="url(#glow)" fill="none" stroke="#7fe6ff">
-        <ellipse cx="70" cy="178" rx="50" ry="14" stroke-width="2.4"/>
-        <line x1="120" y1="178" x2="95" y2="178" stroke-width="2"/>
-        <circle cx="70" cy="178" r="17" fill="#7fe6ff" fill-opacity=".1" stroke-width=".8" opacity=".5"/>
-        <g stroke-width="2.2">
-          <line class="rung" x1="52" y1="156" x2="88" y2="156"/>
-          <line class="rung" x1="52" y1="145" x2="88" y2="145"/>
-          <line class="rung" x1="51" y1="134" x2="89" y2="134"/>
-          <line class="rung" x1="51" y1="123" x2="89" y2="123"/>
-          <line class="rung" x1="50" y1="112" x2="90" y2="112"/>
-          <line class="rung" x1="50" y1="101" x2="90" y2="101"/>
-        </g>
-      </g>
-
-      <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="9" letter-spacing="3" text-anchor="middle">
-        <text x="277" y="248" fill="#ffc978" opacity=".75">PITCH</text>
-        <text x="70"  y="248" fill="#7fe6ff" opacity=".75">VOLUME</text>
+      <g font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="10" letter-spacing="2" text-anchor="middle" fill="#d9b98a" opacity=".8">
+        <text x="49.6" y="-141.5">pitch</text>
+        <text x="-71.3" y="45.9">volume</text>
       </g>
     </svg>
 
